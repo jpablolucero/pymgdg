@@ -24,10 +24,7 @@ class LagrangeBasis:
     ----------
     p : int
         Order of the Lagrange polynomial used as a shape and test functions. 
-
-
     """
-
     def __init__(self,p):
         self.p = p
         self.x,self.h = sy.symbols('x h')
@@ -48,7 +45,6 @@ class ReactionDiffusion:
     ---------- 
     bs : Object containing the basis functions to be used and the order of the polynomial \
     degree desired.
-
 
     .. math::
         \newcommand\scalemath[2]{\scalebox{#1}{\mbox{\ensuremath{\displaystyle #2}}}}
@@ -96,7 +92,6 @@ class ReactionDiffusion:
     the Laplacian under the assumption that :math:`\delta_0` is sufficiently large, these
     estimates are still valid under the addition of a reaction term, since such a term is
     positive definite.
-    
     """
     def __init__(self,bs):
         self.bs = bs
@@ -180,7 +175,6 @@ class DiscreteOperator:
 
     periodic : bool
         True: Periodic boundary conditions, False: Dirichlet boundary conditions.
-
     """
     def __init__(self,problem,n,periodic_=False):
         self.pb = problem
@@ -292,7 +286,6 @@ class CoarseCorrection:
     dc: 
         Discrete operator
     """
-    
     def __init__(self,dc):
         self.dc = dc
         self.An = dc.An
@@ -335,11 +328,57 @@ class CoarseCorrection:
         self.R = 2 * np.transpose(self.RT)
         self.A0inv = np.linalg.pinv(self.R.dot(self.An.dot(self.RT)))
 
-dc = DiscreteOperator(ReactionDiffusion(LagrangeBasis(1)),64,False)
+def plot(dc):
+    r"""
+    Plotting function for a simple problem.
+
+    Parameters
+    ----------
+    dc: 
+        Discrete operator
+    """
+    p=dc.bs.p
+    n=dc.n
+    h=1./dc.n
+    dc.nassemble({dc.bs.h:h,dc.pb.d:float(p*(p+1)),dc.pb.e:np.infty})
+    g = np.zeros(((p + 1)*n,1))
+    f = np.zeros(((p + 1)*n,1))
+    [xtab,weights] = lo.lobatto_compute(p+1)
+    for b in range(n):
+        for i in range(p + 1):
+            g[(p + 1)*b + i] = (b + xtab[i]) * h
+    
+    [xtab2,weights2] = lo.lobatto_compute(p+3)
+    for b in range(n):
+        for i in range(p + 1):
+            for j in range(len(xtab2)):
+                f[(p + 1)*b + i] += float(weights2[j]*h*\
+                                          (dc.bs.Fx[i]*4.*
+                                           sy.pi*sy.pi*sy.sin(2.*sy.pi*(dc.bs.x+b*h)))\
+                                          .subs({dc.bs.x:xtab2[j]*h}).subs({dc.bs.h:h}))
+    
+    mp.grid(which='major', axis='x', linewidth=0.75, linestyle='-', color='0.75')
+    mp.grid(which='minor', axis='x', linewidth=0.25, linestyle='-', color='0.75')
+    mp.grid(which='major', axis='y', linewidth=0.75, linestyle='-', color='0.75')
+    mp.grid(which='minor', axis='y', linewidth=0.25, linestyle='-', color='0.75')
+    mp.xlabel("x")
+    mp.ylabel("u(x)")
+    mp.plot(g,np.linalg.inv(dc.An).dot(f))
+    mp.show()
+
+dc = DiscreteOperator(ReactionDiffusion(LagrangeBasis(3)),4,True)
 
 def func(dd):
-    dc.nassemble({dc.bs.h:1./float(dc.n),dc.pb.d:dd,dc.pb.e:(6.**(-1))/(dc.n)**2})
-    dc.assemble_pointBJ()
+    r"""
+    Fmin to obtain the optimal relaxation parameter that delivers the lowest spectral radius.
+
+    Parameters
+    ----------
+    dd: 
+        DG method penalty parameter.
+    """
+    dc.nassemble({dc.bs.h:1./float(dc.n),dc.pb.d:dd,dc.pb.e:np.infty})#(6.**(-1))/(dc.n)**2})
+    dc.assemble_cellBJ()
     cc = CoarseCorrection(dc)
     cc.assemble()
     Id = np.eye((dc.bs.p + 1)*dc.n)
@@ -347,10 +386,10 @@ def func(dd):
     R = cc.R
     RT = cc.RT
     An = dc.An
-    Dinv = dc.Dp
+    Dinv = dc.Dc
 
     def func2(rlx):
-        return sorted(abs(np.real(np.linalg.eigvals((Id - RT.dot(A0inv.dot(R.dot(An)))).dot((Id-rlx*Dinv.dot(An)))))),reverse=True)[0]
+        return sorted(abs(np.real(np.linalg.eigvals((Id - RT.dot(A0inv.dot(R.dot(An)))).dot((Id-rlx*Dinv.dot(An)))))),reverse=True)[1]
 
     xmin,ffmin,dum1,dum2,dum3 = fmin(func2,np.array([1]),ftol=0.000001,xtol=0.000001,full_output=True,disp=False)
         
