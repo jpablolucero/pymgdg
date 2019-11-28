@@ -2,7 +2,7 @@ r"""
 pymgdg.py
 ====================================
 Solution of a symmetric interior penalty discontinuous Galerkin (SIPG) discretized,
-singularly perturbed reaction-diffusion equation in 1D, using linear finite elements.
+singularly perturbed reaction-diffusion equation in 1D using lagrange polynomial elements.
 """
 
 import math
@@ -25,8 +25,8 @@ class LagrangeBasis:
     p : int
         Order of the Lagrange polynomial used as a shape and test functions. 
     """
-    def __init__(self,p):
-        self.p = p
+    def __init__(self,order_):
+        self.p = order_
         self.x,self.h = sy.symbols('x h')
         [self.xtab,self.weights] = lo.lobatto_compute(self.p + 1)
         self.Fx = sy.ones(1,self.p + 1)
@@ -93,8 +93,8 @@ class ReactionDiffusion:
     estimates are still valid under the addition of a reaction term, since such a term is
     positive definite.
     """
-    def __init__(self,bs):
-        self.bs = bs
+    def __init__(self,basis_):
+        self.bs = basis_
         self.e,self.d = sy.symbols('e d')
         
     def cell(self):
@@ -176,17 +176,19 @@ class DiscreteOperator:
     periodic : bool
         True: Periodic boundary conditions, False: Dirichlet boundary conditions.
     """
-    def __init__(self,problem,n,periodic_=False):
-        self.pb = problem
-        self.bs = problem.bs
-        self.CM = problem.cell()
-        [self.CM0,self.CM1] = problem.boundary()
-        self.FM = problem.face()
-        self.n = n
+    def __init__(self,problem_,n_,periodic_=False):
+        self.pb = problem_
+        self.bs = problem_.bs
+        self.CM = problem_.cell()
+        [self.CM0,self.CM1] = problem_.boundary()
+        self.FM = problem_.face()
+        self.n = n_
         self.periodic = periodic_
         self.A = sy.Matrix(sy.zeros(1,1))
         self.An = np.zeros((1,1))
         self.Dc = np.zeros((1,1))
+        self.Das = np.zeros((1,1))
+        self.Dras = np.zeros((1,1))
         self.Dp = np.zeros((1,1))
         
     def assemble(self):
@@ -261,7 +263,66 @@ class DiscreteOperator:
             self.Dc[(self.bs.p + 1)*b:(self.bs.p + 1)*(b+1),\
                     (self.bs.p + 1)*b:(self.bs.p + 1)*(b+1)] = np.linalg.inv(self.An[(self.bs.p + 1)*b:(self.bs.p + 1)*(b+1),\
                                                                                      (self.bs.p + 1)*b:(self.bs.p + 1)*(b+1)])
+    def assemble_as(self):
+        r"""
+        Assembles the _overlapping_ Block Jacobi matrix.
+        """
+        self.Das = np.zeros(((self.bs.p + 1)*self.n,(self.bs.p + 1)*self.n))
+        
+        Ainv = np.linalg.inv(self.An[(self.bs.p + 1)*1:(self.bs.p + 1)*3,
+                                     (self.bs.p + 1)*1:(self.bs.p + 1)*3])
 
+        self.Das[(self.bs.p + 1)*0:(self.bs.p + 1)*1,
+                  (self.bs.p + 1)*0:(self.bs.p + 1)*1]+=Ainv[(self.bs.p + 1)*1:(self.bs.p + 1)*2,
+                                                             (self.bs.p + 1)*1:(self.bs.p + 1)*2]
+
+        self.Das[(self.bs.p + 1)*0:(self.bs.p + 1)*1,
+                  (self.bs.p + 1)*(self.n-1):(self.bs.p + 1)*((self.n-1)+2)]+=Ainv[(self.bs.p + 1)*1:(self.bs.p + 1)*2,
+                                                                                   (self.bs.p + 1)*0:(self.bs.p + 1)*1]
+        
+        for b in range(self.n-1):
+            self.Das[(self.bs.p + 1)*b:(self.bs.p + 1)*(b+2),
+                      (self.bs.p + 1)*b:(self.bs.p + 1)*(b+2)]+=Ainv[(self.bs.p + 1)*0:(self.bs.p + 1)*2,
+                                                                     (self.bs.p + 1)*0:(self.bs.p + 1)*2]
+
+        self.Das[(self.bs.p + 1)*(self.n-1):(self.bs.p + 1)*((self.n-1)+2),
+                  (self.bs.p + 1)*(self.n-1):(self.bs.p + 1)*((self.n-1)+2)]+=Ainv[(self.bs.p + 1)*0:(self.bs.p + 1)*1,
+                                                                                   (self.bs.p + 1)*0:(self.bs.p + 1)*1]
+
+        self.Das[(self.bs.p + 1)*(self.n-1):(self.bs.p + 1)*((self.n-1)+2),
+                  (self.bs.p + 1)*0:(self.bs.p + 1)*1]+=Ainv[(self.bs.p + 1)*0:(self.bs.p + 1)*1,
+                                                             (self.bs.p + 1)*1:(self.bs.p + 1)*2]
+
+    def assemble_ras(self):
+        r"""
+        Assembles the _overlapping_ Block Jacobi matrix.
+        """
+        self.Dras = np.zeros(((self.bs.p + 1)*self.n,(self.bs.p + 1)*self.n))
+        
+        Ainv = np.linalg.inv(self.An[(self.bs.p + 1)*1:(self.bs.p + 1)*4,
+                                     (self.bs.p + 1)*1:(self.bs.p + 1)*4])
+        
+        self.Dras[(self.bs.p + 1)*0:(self.bs.p + 1)*1,
+                  (self.bs.p + 1)*0:(self.bs.p + 1)*2]=Ainv[(self.bs.p + 1)*1:(self.bs.p + 1)*2,
+                                                            (self.bs.p + 1)*1:(self.bs.p + 1)*3]
+
+        self.Dras[(self.bs.p + 1)*0:(self.bs.p + 1)*1,
+                  (self.bs.p + 1)*(self.n-1):(self.bs.p + 1)*((self.n-1)+2)]=Ainv[(self.bs.p + 1)*1:(self.bs.p + 1)*2,
+                                                                                  (self.bs.p + 1)*0:(self.bs.p + 1)*1]
+
+        for b in range(1,self.n-1):
+            self.Dras[(self.bs.p + 1)*b:(self.bs.p + 1)*(b+1),
+                      (self.bs.p + 1)*(b-1):(self.bs.p + 1)*(b+2)]=Ainv[(self.bs.p + 1)*1:(self.bs.p + 1)*2,
+                                                                        (self.bs.p + 1)*0:(self.bs.p + 1)*3]
+
+        self.Dras[(self.bs.p + 1)*(self.n-1):(self.bs.p + 1)*((self.n-1)+1),
+                  (self.bs.p + 1)*((self.n-1)-1):(self.bs.p + 1)*((self.n-1)+1)]=Ainv[(self.bs.p + 1)*1:(self.bs.p + 1)*2,
+                                                                                    (self.bs.p + 1)*0:(self.bs.p + 1)*2]
+
+        self.Dras[(self.bs.p + 1)*(self.n-1):(self.bs.p + 1)*((self.n-1)+1),
+                  (self.bs.p + 1)*0:(self.bs.p + 1)*1]=Ainv[(self.bs.p + 1)*1:(self.bs.p + 1)*2,
+                                                            (self.bs.p + 1)*2:(self.bs.p + 1)*3]
+        
     def assemble_pointBJ(self):
         r"""
         Assembles the _point_ Block Jacobi matrix.
@@ -286,26 +347,29 @@ class CoarseCorrection:
     dc: 
         Discrete operator
     """
-    def __init__(self,dc):
-        self.dc = dc
+    def __init__(self,discreteOperator_):
+        self.dc = discreteOperator_
         self.An = dc.An
         self.bs = dc.bs
         self.n = dc.n
         self.RT = np.zeros(((self.bs.p + 1)*self.n,(self.bs.p + 1)*int(self.n/2)))
-        self.R = 2 * self.RT.transpose()
+        self.R = self.RT.transpose()
+        self.A0 = np.zeros((1,1))
         self.A0inv = np.zeros((1,1))
         
     def assemble(self):
         r"""
         Assemble coarse correction matrix
         """
+        self.RT = np.zeros(((self.bs.p + 1)*self.n,(self.bs.p + 1)*int(self.n/2)))
+        c = 1./2.
         for k in range(0,int(((self.bs.p + 1)*self.n)/2),self.bs.p + 1):
             avg = False 
             j = k
             for i in range(2*k,2*k+(self.bs.p + 1),1):
                 if avg:
-                    self.RT[i,j] = 0.5
-                    self.RT[i,j+1] = 0.5
+                    self.RT[i,j] = c
+                    self.RT[i,j+1] = 1-c
                     j += 1
                     avg = False
                 else:
@@ -318,15 +382,17 @@ class CoarseCorrection:
                 j -= 1
             for i in range(2*k+(self.bs.p + 1),2*k+2*(self.bs.p + 1),1):
                 if avg:
-                    self.RT[i,j] = 0.5
-                    self.RT[i,j+1] = 0.5
+                    self.RT[i,j] = 1-c
+                    self.RT[i,j+1] = c
                     j += 1
                     avg = False
                 else:
                     self.RT[i,j] = 1.
                     avg = True
-        self.R = 2 * np.transpose(self.RT)
-        self.A0inv = np.linalg.pinv(self.R.dot(self.An.dot(self.RT)))
+        self.R = np.transpose(self.RT)
+        self.RT = self.RT / 2.
+        self.A0 = self.R.dot(self.An.dot(self.RT))
+        self.A0inv = np.linalg.pinv(self.A0)
 
 def plot(dc):
     r"""
@@ -366,20 +432,22 @@ def plot(dc):
     mp.plot(g,np.linalg.inv(dc.An).dot(f))
     mp.show()
 
-dc = DiscreteOperator(ReactionDiffusion(LagrangeBasis(3)),4,True)
+dc = DiscreteOperator(problem_=ReactionDiffusion(basis_=LagrangeBasis(order_=1)),
+                      n_=8,
+                      periodic_=False)
 
 def func(dd):
     r"""
     Fmin to obtain the optimal relaxation parameter that delivers the lowest spectral radius.
-
+    
     Parameters
     ----------
     dd: 
-        DG method penalty parameter.
+    DG method penalty parameter.
     """
     dc.nassemble({dc.bs.h:1./float(dc.n),dc.pb.d:dd,dc.pb.e:np.infty})#(6.**(-1))/(dc.n)**2})
     dc.assemble_cellBJ()
-    cc = CoarseCorrection(dc)
+    cc = CoarseCorrection(discreteOperator_=dc)
     cc.assemble()
     Id = np.eye((dc.bs.p + 1)*dc.n)
     A0inv = cc.A0inv
@@ -387,27 +455,27 @@ def func(dd):
     RT = cc.RT
     An = dc.An
     Dinv = dc.Dc
-
+    el = 0
+    if (dc.periodic): el = 1
     def func2(rlx):
-        return sorted(abs(np.real(np.linalg.eigvals((Id - RT.dot(A0inv.dot(R.dot(An)))).dot((Id-rlx*Dinv.dot(An)))))),reverse=True)[1]
-
-    xmin,ffmin,dum1,dum2,dum3 = fmin(func2,np.array([1]),ftol=0.000001,xtol=0.000001,full_output=True,disp=False)
+        M=(Id - RT.dot(A0inv.dot(R.dot(An)))).dot((Id-rlx*Dinv.dot(An)))
+        return sorted(abs(np.real(np.linalg.eigvals(M))),reverse=True)[el]
         
-    print("{"+str(xmin[0])+","+str(ffmin)+"},")
+    xmin,ffmin,dum1,dum2,dum3 = fmin(func2,np.array([0.1]),ftol=0.000001,xtol=0.000001,full_output=True,disp=False)
 
-# for i in range(0,11):
-#    func(1.001+((1.2-1.001)*(2.**(float(i)/10.) - 1.)))
-# for i in range(0,11):
-#    func(1.2+((1.4196433776070805663-1.2)*(2.**(float(i)/10.) - 1.)))
-# for i in range(0,5):
-#    func(1.4196433776070805663+((1.5-1.4196433776070805663)*(2.**(float(i)/4.) - 1.)))
-# for i in range(0,21):
-#    func(1.5+((4.-1.5)*(2.**(float(i)/20.) - 1.)))
-# for i in range(0,11):
-#    func(4.+((6.-4.)*(2.**(float(i)/10.) - 1.)))
-# for i in range(0,11):
-#    func(6.+((100.-6.)*(2.**(float(i)/10.) - 1.)))
+    # MM = (Id - RT.dot(A0inv.dot(R.dot(An)))).dot((Id-xmin[0]*Dinv.dot(An)))
+    # conveig = 0.
+    # for _ in range(10):
+    #     v = np.random.rand((dc.bs.p + 1)*dc.n)
+    #     norm = 1.;
+    #     while (norm > 1E-4):
+    #         v = MM.dot(v)
+    #         norm = np.linalg.norm(v)
+    #     eig = abs(v.dot(MM.dot(v))/v.dot(v))
+    #     if (eig > conveig) : conveig = eig
 
-# for i in range(0,11):
-#     func(1.001+((400.-1.001)*((float(i)/10.)**3)))
+    print("{"+str(xmin[0])+","+str(ffmin)+"},")#+str(dd)+","+str(conveig))
     
+for i in range(0,51):
+    func(1.001+((5.-1.001)*(2.**(float(i)/50.) - 1.)))
+
