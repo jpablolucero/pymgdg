@@ -4,15 +4,17 @@ pymgdg.py
 Solution of a symmetric interior penalty discontinuous Galerkin (SIPG) discretized,
 singularly perturbed reaction-diffusion equation in 1D using lagrange polynomial elements.
 """
-
+import gmres
 import math
 import numpy as np
 import sympy as sy
 import scipy as sc
 import sys
 from scipy.optimize import fmin
+import matplotlib
+matplotlib.use('pdf')
 import matplotlib.pyplot as mp
-np.set_printoptions(precision=3,threshold=sys.maxsize,linewidth=np.inf,suppress=True)
+np.set_printoptions(precision=8,threshold=sys.maxsize,linewidth=np.inf,suppress=True)
 import lobatto as lo
 
 class LagrangeBasis:
@@ -347,8 +349,9 @@ class CoarseCorrection:
     dc: 
         Discrete operator
     """
-    def __init__(self,discreteOperator_):
+    def __init__(self,discreteOperator_,c_):
         self.dc = discreteOperator_
+        self.c = c_
         self.An = dc.An
         self.bs = dc.bs
         self.n = dc.n
@@ -362,7 +365,7 @@ class CoarseCorrection:
         Assemble coarse correction matrix
         """
         self.RT = np.zeros(((self.bs.p + 1)*self.n,(self.bs.p + 1)*int(self.n/2)))
-        c = 1./2.
+        c = self.c
         for k in range(0,int(((self.bs.p + 1)*self.n)/2),self.bs.p + 1):
             avg = False 
             j = k
@@ -433,7 +436,7 @@ def plot(dc):
     mp.show()
 
 dc = DiscreteOperator(problem_=ReactionDiffusion(basis_=LagrangeBasis(order_=1)),
-                      n_=8,
+                      n_=128,
                       periodic_=False)
 
 def func(dd):
@@ -447,7 +450,7 @@ def func(dd):
     """
     dc.nassemble({dc.bs.h:1./float(dc.n),dc.pb.d:dd,dc.pb.e:np.infty})#(6.**(-1))/(dc.n)**2})
     dc.assemble_cellBJ()
-    cc = CoarseCorrection(discreteOperator_=dc)
+    cc = CoarseCorrection(discreteOperator_=dc,c_=0.564604)
     cc.assemble()
     Id = np.eye((dc.bs.p + 1)*dc.n)
     A0inv = cc.A0inv
@@ -476,6 +479,104 @@ def func(dd):
 
     print("{"+str(xmin[0])+","+str(ffmin)+"},")#+str(dd)+","+str(conveig))
     
-for i in range(0,51):
-    func(1.001+((5.-1.001)*(2.**(float(i)/50.) - 1.)))
+# for i in range(0,51):
+#     func(1.001+((6.-1.001)*(2.**(float(i)/50.) - 1.)))
 
+c = 0.56460427612264228825165455619252
+a = 0.90815413446701560826304190680793
+d = 1.51697830014707997232890254807433
+
+# c = 0.5
+# a = 1.
+# d = 2.
+
+dc.nassemble({dc.bs.h:1./dc.n,dc.pb.d:d,dc.pb.e:np.infty})
+dc.assemble_cellBJ()
+cc = CoarseCorrection(discreteOperator_=dc,c_=c)
+cc.assemble()
+Id = np.eye((dc.bs.p + 1)*dc.n)
+A0inv = cc.A0inv
+R = cc.R
+RT = cc.RT
+An = dc.An
+Dinv = dc.Dc
+el = 0
+if (dc.periodic): el = 1
+
+def mv(g):
+    x = a*Dinv.dot(g)
+    y = x + RT.dot(A0inv).dot(R).dot(g - An.dot(x))
+    return y
+
+rhs = np.ones((dc.bs.p + 1)*dc.n)/float((dc.bs.p + 1)*dc.n)
+
+def callback(g):
+    print(g)
+#    print('test')
+#    print(np.linalg.norm(rhs - An.dot(g)))
+
+# M = sc.sparse.linalg.LinearOperator(((dc.bs.p + 1)*dc.n,(dc.bs.p + 1)*dc.n),matvec=mv)
+
+MM = a*Dinv + RT.dot(A0inv).dot(R).dot(Id - a*An.dot(Dinv))
+
+eigvals,eigvecs = np.linalg.eig(MM.dot(An))
+eigvals = np.real(eigvals)
+# eigsort = np.array([eigvals[0]])
+# for num in eigvals:
+#     counted = False
+#     for aux in eigsort:
+#         if (abs(aux) < 1.E-10):
+#             if (abs(num-aux) < 1.E-8):
+#                 counted = True
+#                 break
+#         elif (abs((num-aux)/aux) < 1.E-8):
+#             counted = True
+#             break
+#     if (not counted):
+#         eigsort = np.append(eigsort,num)
+#eigsort = np.array(sorted(eigsort,reverse=True))
+# eigsort = np.array(sorted(eigvals,reverse=True))
+# mp.xlabel("x")
+# mp.ylabel("u(x)")
+# mp.plot(eigsort)
+# mp.show()
+
+
+# x = np.zeros((dc.bs.p + 1)*dc.n)
+# norm0 = np.linalg.norm(np.ones((dc.bs.p + 1)*dc.n)/float((dc.bs.p + 1)*dc.n))
+# normr = 1.
+# while (normr/norm0 > 1.E-8):
+#     r = rhs - An.dot(x)
+#     x = x + MM.dot(r)
+#     normr = np.linalg.norm(r)
+#     print(normr)
+
+x,e = sc.sparse.linalg.gmres(An,
+                             eigvecs[:,100],
+                             x0=None,
+                             tol=1e-10,
+                             restart=1000,
+                             maxiter=None,
+                             M=MM,
+                             callback=callback,
+                             restrt=None,
+                             atol=1e-20)
+
+# x,e = sc.sparse.linalg.cgs(dc.An,
+#                            rhs,
+#                            None,
+#                            1.E-8,
+#                            None,
+#                            MM,
+#                            callback)
+
+# x,e = sc.sparse.linalg.minres(An,
+#                               rhs,
+#                               x0=None,
+#                               shift=0.0,
+#                               tol=1e-5,
+#                               maxiter=1E6,
+#                               M=MM,
+#                               callback=callback,
+#                               show=False,
+#                               check=False)
