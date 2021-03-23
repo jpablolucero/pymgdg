@@ -4,7 +4,8 @@ pymgdg.py
 Solution of a symmetric interior penalty discontinuous Galerkin (SIPG) discretized,
 singularly perturbed reaction-diffusion equation in 1D using lagrange polynomial elements.
 """
-import gmres
+#import gmres
+import copy as cp
 import math
 import numpy as np
 import sympy as sy
@@ -104,19 +105,27 @@ class ReactionDiffusion:
         Cell integration
         """
         CM = sy.Matrix(sy.zeros((self.bs.p + 1),(self.bs.p + 1)))
+        CM00 = sy.Matrix(sy.zeros((self.bs.p + 1),(self.bs.p + 1)))
         for i in range((self.bs.p + 1)):
             for j in range((self.bs.p + 1)):
                 fa=self.bs.Fx[i]
                 fb=self.bs.Fx[j]
+            # + 1/self.e * sy.integrate(fa*fb,(self.bs.x,0,self.bs.h)) \
                 CM[i,j] = sy.integrate(fa.diff(self.bs.x)*fb.diff(self.bs.x),(self.bs.x,0,self.bs.h)) \
-                          + 1/self.e * sy.integrate(fa*fb,(self.bs.x,0,self.bs.h)) \
-                          - (0                    - fa.subs(self.bs.x,0)        )     * (0                    + fb.diff(self.bs.x).subs(self.bs.x,0)) / 2 \
-                          - (0                    + fa.diff(self.bs.x).subs(self.bs.x,0)) / 2 * (0                    - fb.subs(self.bs.x,0)        )     \
-                          - (fa.subs(self.bs.x,self.bs.h)         - 0                   )     * (fb.diff(self.bs.x).subs(self.bs.x,self.bs.h) + 0                   ) / 2 \
-                          - (fa.diff(self.bs.x).subs(self.bs.x,self.bs.h) + 0                   ) / 2 * (fb.subs(self.bs.x,self.bs.h)         - 0                   )     \
-                          + self.d / self.bs.h * (0            - fa.subs(self.bs.x,0)) * (0            - fb.subs(self.bs.x,0))                                 \
-                          + self.d / self.bs.h * (fa.subs(self.bs.x,self.bs.h) - 0           ) * (fb.subs(self.bs.x,self.bs.h) - 0           )
-        return CM
+                    - (0                    - fa.subs(self.bs.x,0)        )     * (0                    + fb.diff(self.bs.x).subs(self.bs.x,0)) / 2 \
+                    - (0                    + fa.diff(self.bs.x).subs(self.bs.x,0)) / 2 * (0                    - fb.subs(self.bs.x,0)        )     \
+                    - (fa.subs(self.bs.x,self.bs.h)         - 0                   )     * (fb.diff(self.bs.x).subs(self.bs.x,self.bs.h) + 0                   ) / 2 \
+                    - (fa.diff(self.bs.x).subs(self.bs.x,self.bs.h) + 0                   ) / 2 * (fb.subs(self.bs.x,self.bs.h)         - 0                   )     \
+                    + self.d / self.bs.h * (0            - fa.subs(self.bs.x,0)) * (0            - fb.subs(self.bs.x,0))                                 \
+                    + self.d / self.bs.h * (fa.subs(self.bs.x,self.bs.h) - 0           ) * (fb.subs(self.bs.x,self.bs.h) - 0           )
+                CM00[i,j] = sy.integrate(fa.diff(self.bs.x)*fb.diff(self.bs.x),(self.bs.x,0,self.bs.h)) \
+                    - 2*(0                    - fa.subs(self.bs.x,0)        )     * (0                    + fb.diff(self.bs.x).subs(self.bs.x,0)) / 2 \
+                    - 2*(0                    + fa.diff(self.bs.x).subs(self.bs.x,0)) / 2 * (0                    - fb.subs(self.bs.x,0)        )     \
+                    - 2*(fa.subs(self.bs.x,self.bs.h)         - 0                   )     * (fb.diff(self.bs.x).subs(self.bs.x,self.bs.h) + 0                   ) / 2 \
+                    - 2*(fa.diff(self.bs.x).subs(self.bs.x,self.bs.h) + 0                   ) / 2 * (fb.subs(self.bs.x,self.bs.h)         - 0                   )     \
+                    + 2*self.d / self.bs.h * (0            - fa.subs(self.bs.x,0)) * (0            - fb.subs(self.bs.x,0))                                 \
+                    + 2*self.d / self.bs.h * (fa.subs(self.bs.x,self.bs.h) - 0           ) * (fb.subs(self.bs.x,self.bs.h) - 0           )
+        return [CM,CM00]
     
     def boundary(self):
         r"""
@@ -128,8 +137,8 @@ class ReactionDiffusion:
             for j in range((self.bs.p + 1)):
                 fa=self.bs.Fx[i]
                 fb=self.bs.Fx[j]
+#                           + 1/self.e * sy.integrate(fa*fb,(self.bs.x,0,self.bs.h)) \
                 CM0[i,j] = sy.integrate(fa.diff(self.bs.x)*fb.diff(self.bs.x),(self.bs.x,0,self.bs.h)) \
-                           + 1/self.e * sy.integrate(fa*fb,(self.bs.x,0,self.bs.h)) \
                            - (0                    - fa.subs(self.bs.x,0)        )     * (0                    + fb.diff(self.bs.x).subs(self.bs.x,0)) / 2 \
                            - (0                    + fa.diff(self.bs.x).subs(self.bs.x,0)) / 2 * (0                    - fb.subs(self.bs.x,0)        )     \
                            - (fa.subs(self.bs.x,self.bs.h)         - 0                   )     * (fb.diff(self.bs.x).subs(self.bs.x,self.bs.h) + 0                   ) / 2 \
@@ -181,7 +190,7 @@ class DiscreteOperator:
     def __init__(self,problem_,n_,periodic_=False):
         self.pb = problem_
         self.bs = problem_.bs
-        self.CM = problem_.cell()
+        [self.CM,self.CM00] = problem_.cell()
         [self.CM0,self.CM1] = problem_.boundary()
         self.FM = problem_.face()
         self.n = n_
@@ -198,27 +207,30 @@ class DiscreteOperator:
         Assembles the symbolic matrix.
         """
         self.A = sy.Matrix(sy.zeros((self.bs.p + 1)*self.n,(self.bs.p + 1)*self.n))
-        for b in range(self.n):
-            for i in range((self.bs.p + 1)):
-                for j in range((self.bs.p + 1)):
-                    if (b==0):
-                        if (self.periodic):
-                            self.A[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j] = self.CM[i,j]
-                            self.A[(self.bs.p + 1)*b+i,(self.bs.p + 1)*(self.n-1)+j] = self.FM.transpose()[i,j]
+        if (self.n==1):
+            self.A = self.CM00
+        else:
+            for b in range(self.n):
+                for i in range((self.bs.p + 1)):
+                    for j in range((self.bs.p + 1)):
+                        if (b==0):
+                            if (self.periodic):
+                                self.A[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j] = self.CM[i,j]
+                                self.A[(self.bs.p + 1)*b+i,(self.bs.p + 1)*(self.n-1)+j] = self.FM.transpose()[i,j]
+                            else:
+                                self.A[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j] = self.CM0[i,j]
+                            self.A[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j+(self.bs.p + 1)] = self.FM[i,j]
+                        elif (b==self.n - 1):
+                            if (self.periodic):
+                                self.A[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j] = self.CM[i,j]
+                                self.A[(self.bs.p + 1)*b+i,(self.bs.p + 1)*0+j] = self.FM[i,j]
+                            else:
+                                self.A[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j] = self.CM1[i,j]
+                            self.A[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j-(self.bs.p + 1)] = self.FM.transpose()[i,j]
                         else:
-                            self.A[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j] = self.CM0[i,j]
-                        self.A[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j+(self.bs.p + 1)] = self.FM[i,j]
-                    elif (b==self.n - 1):
-                        if (self.periodic):
                             self.A[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j] = self.CM[i,j]
-                            self.A[(self.bs.p + 1)*b+i,(self.bs.p + 1)*0+j] = self.FM[i,j]
-                        else:
-                            self.A[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j] = self.CM1[i,j]
-                        self.A[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j-(self.bs.p + 1)] = self.FM.transpose()[i,j]
-                    else:
-                        self.A[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j] = self.CM[i,j]
-                        self.A[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j+(self.bs.p + 1)] = self.FM[i,j]
-                        self.A[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j-(self.bs.p + 1)] = self.FM.transpose()[i,j]
+                            self.A[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j+(self.bs.p + 1)] = self.FM[i,j]
+                            self.A[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j-(self.bs.p + 1)] = self.FM.transpose()[i,j]
 
     def nassemble(self,par):
         r"""
@@ -231,30 +243,34 @@ class DiscreteOperator:
         """
         self.An = np.zeros(((self.bs.p + 1)*self.n,(self.bs.p + 1)*self.n))
         CM = np.matrix(self.CM.subs(par)).astype(float)
+        CM00 = np.matrix(self.CM00.subs(par)).astype(float)
         CM0 = np.matrix(self.CM0.subs(par)).astype(float)
         CM1 = np.matrix(self.CM1.subs(par)).astype(float)
         FM = np.matrix(self.FM.subs(par)).astype(float)
-        for b in range(self.n):
-            for i in range((self.bs.p + 1)):
-                for j in range((self.bs.p + 1)):
-                    if (b==0):
-                        if (self.periodic):
-                            self.An[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j] = CM[i,j]
-                            self.An[(self.bs.p + 1)*b+i,(self.bs.p + 1)*(self.n-1)+j] = FM.transpose()[i,j]
+        if (self.n==1):
+            self.An = CM00
+        else:
+            for b in range(self.n):
+                for i in range((self.bs.p + 1)):
+                    for j in range((self.bs.p + 1)):
+                        if (b==0):
+                            if (self.periodic):
+                                self.An[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j] = CM[i,j]
+                                self.An[(self.bs.p + 1)*b+i,(self.bs.p + 1)*(self.n-1)+j] = FM.transpose()[i,j]
+                            else:
+                                self.An[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j] = CM0[i,j]
+                            self.An[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j+(self.bs.p + 1)] = FM[i,j]
+                        elif (b==self.n - 1):
+                            if (self.periodic):
+                                self.An[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j] = CM[i,j]
+                                self.An[(self.bs.p + 1)*b+i,(self.bs.p + 1)*0+j] = FM[i,j]
+                            else:
+                                self.An[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j] = CM1[i,j]
+                            self.An[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j-(self.bs.p + 1)] = FM.transpose()[i,j]
                         else:
-                            self.An[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j] = CM0[i,j]
-                        self.An[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j+(self.bs.p + 1)] = FM[i,j]
-                    elif (b==self.n - 1):
-                        if (self.periodic):
                             self.An[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j] = CM[i,j]
-                            self.An[(self.bs.p + 1)*b+i,(self.bs.p + 1)*0+j] = FM[i,j]
-                        else:
-                            self.An[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j] = CM1[i,j]
-                        self.An[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j-(self.bs.p + 1)] = FM.transpose()[i,j]
-                    else:
-                        self.An[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j] = CM[i,j]
-                        self.An[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j+(self.bs.p + 1)] = FM[i,j]
-                        self.An[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j-(self.bs.p + 1)] = FM.transpose()[i,j]
+                            self.An[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j+(self.bs.p + 1)] = FM[i,j]
+                            self.An[(self.bs.p + 1)*b+i,(self.bs.p + 1)*b+j-(self.bs.p + 1)] = FM.transpose()[i,j]
 
     def assemble_cellBJ(self):
         r"""
@@ -352,15 +368,40 @@ class CoarseCorrection:
     def __init__(self,discreteOperator_,c_):
         self.dc = discreteOperator_
         self.c = c_
-        self.An = dc.An
-        self.bs = dc.bs
-        self.n = dc.n
+        self.An = self.dc.An
+        self.bs = self.dc.bs
+        self.n = self.dc.n
         self.RT = np.zeros(((self.bs.p + 1)*self.n,(self.bs.p + 1)*int(self.n/2)))
         self.R = self.RT.transpose()
+        self.RTs = sy.zeros(2*self.n,self.n)
+        self.Rs = self.RTs.transpose()
         self.A0 = np.zeros((1,1))
         self.A0inv = np.zeros((1,1))
         
     def assemble(self):
+        r"""
+        Assemble coarse correction matrix
+        """
+        self.RT = sy.zeros(2*self.n,self.n)
+
+        BT = sy.Matrix([
+            [        sy.S(1),        sy.S(0)],
+            [sy.S(1)/sy.S(2),sy.S(1)/sy.S(2)],
+            [sy.S(1)/sy.S(2),sy.S(1)/sy.S(2)],
+            [        sy.S(0),        sy.S(1)]])
+        
+        for b in range(int(self.n/2)):
+            self.RTs[4*b:4*b+4,2*b:2*b+2] = BT
+
+        B = sy.transpose(sy.Matrix([
+            [        sy.S(2)             ,        sy.S(0)             ],
+            [sy.S(1)-sy.S(2)*self.dc.pb.d,        sy.S(1)             ],
+            [        sy.S(1)             ,sy.S(1)-sy.S(2)*self.dc.pb.d],
+            [        sy.S(0)             ,        sy.S(2)             ]]))
+        for b in range(int(self.n/2)):
+            self.Rs[2*b:2*b+2,4*b:4*b+4] = B
+
+    def nassemble(self):
         r"""
         Assemble coarse correction matrix
         """
@@ -393,7 +434,7 @@ class CoarseCorrection:
                     self.RT[i,j] = 1.
                     avg = True
         self.R = np.transpose(self.RT)
-        self.RT = self.RT / 2.
+        self.RT = self.RT/2
         self.A0 = self.R.dot(self.An.dot(self.RT))
         self.A0inv = np.linalg.pinv(self.A0)
 
@@ -435,11 +476,53 @@ def plot(dc):
     mp.plot(g,np.linalg.inv(dc.An).dot(f))
     mp.show()
 
-dc = DiscreteOperator(problem_=ReactionDiffusion(basis_=LagrangeBasis(order_=1)),
-                      n_=128,
-                      periodic_=False)
+# dc = DiscreteOperator(problem_=ReactionDiffusion(basis_=LagrangeBasis(order_=1)),
+#                       n_=64,
+#                       periodic_=False)
 
-def func(dd):
+
+def MG(g,s,d,rlx):
+    n = int(g.shape[0]/2)
+    dc = DiscreteOperator(problem_=ReactionDiffusion(basis_=LagrangeBasis(order_=1)),
+                          n_=n,
+                          periodic_=False)
+    dc.assemble()
+    dc.nassemble({dc.bs.h:1./dc.n,dc.pb.d:d})
+    dc.assemble_cellBJ()
+    Dinv = dc.Dc
+    cc = CoarseCorrection(discreteOperator_=dc,c_=0.5)
+    cc.assemble()
+    A = np.matrix(dc.A.subs({dc.bs.h:1./dc.n,dc.pb.d:d}),dtype=np.float64)
+    RT = np.matrix(cc.RTs.subs({dc.bs.h:1./dc.n,dc.pb.d:d}),dtype=np.float64)
+    RR = np.matrix(cc.Rs.subs({dc.bs.h:1./dc.n,dc.pb.d:d}),dtype=np.float64)
+    # RT = cc.RT
+    # RR = cc.R
+    R = np.transpose(RT)
+    x = 0*g
+
+    for i in range(s):
+        x = x + rlx*Dinv.dot(g - A.dot(x))
+
+    if (n > 2):
+        x = x + RT.dot(MG(R.dot(g - A.dot(x)),s,d,rlx))
+    else:
+        dc0 = DiscreteOperator(problem_=ReactionDiffusion(basis_=LagrangeBasis(order_=1)),
+                               n_=int(n/2),
+                               periodic_=False)
+        dc0.assemble()
+        A0 = np.matrix((cc.Rs*dc.A*cc.RTs).subs({dc0.bs.h:1./dc0.n,dc0.pb.d:d}),dtype=np.float64)
+        #sy.pprint(sy.simplify(cc.Rs*dc.A*cc.RTs-dc0.A))
+        A0inv = np.linalg.inv(A0)
+        x = x + RT.dot(A0inv.dot(R.dot(g - A.dot(x))))
+        
+    for i in range(s):
+        x = x + rlx*Dinv.dot(g - A.dot(x))
+
+        
+    return x
+
+
+def func(d):
     r"""
     Fmin to obtain the optimal relaxation parameter that delivers the lowest spectral radius.
     
@@ -448,79 +531,213 @@ def func(dd):
     dd: 
     DG method penalty parameter.
     """
-    dc.nassemble({dc.bs.h:1./float(dc.n),dc.pb.d:dd,dc.pb.e:np.infty})#(6.**(-1))/(dc.n)**2})
-    dc.assemble_cellBJ()
-    cc = CoarseCorrection(discreteOperator_=dc,c_=0.564604)
-    cc.assemble()
-    Id = np.eye((dc.bs.p + 1)*dc.n)
-    A0inv = cc.A0inv
-    R = cc.R
-    RT = cc.RT
-    An = dc.An
-    Dinv = dc.Dc
-    el = 0
-    if (dc.periodic): el = 1
+    i = 4
+    n = 2**i
+    dc = DiscreteOperator(problem_=ReactionDiffusion(basis_=LagrangeBasis(order_=1)),
+                          n_=n,
+                          periodic_=False)
+    dc.assemble()
+    A = np.matrix(dc.A.subs({dc.bs.h:1./dc.n,dc.pb.d:d}),dtype=np.float64)
     def func2(rlx):
-        M=(Id - RT.dot(A0inv.dot(R.dot(An)))).dot((Id-rlx*Dinv.dot(An)))
-        return sorted(abs(np.real(np.linalg.eigvals(M))),reverse=True)[el]
-        
-    xmin,ffmin,dum1,dum2,dum3 = fmin(func2,np.array([0.1]),ftol=0.000001,xtol=0.000001,full_output=True,disp=False)
+        E = np.eye(2*n)-MG(A,1,d,rlx[0])
+        return sorted(abs(np.real(np.linalg.eigvals(E))),reverse=True)[0]
+    xmin,ffmin,dum1,dum2,dum3 = fmin(func2,np.array([1.]),ftol=0.000001,xtol=0.000001,full_output=True,disp=False)
+    print(xmin[0],end=" ")
+    print(ffmin)
 
-    # MM = (Id - RT.dot(A0inv.dot(R.dot(An)))).dot((Id-xmin[0]*Dinv.dot(An)))
-    # conveig = 0.
-    # for _ in range(10):
-    #     v = np.random.rand((dc.bs.p + 1)*dc.n)
-    #     norm = 1.;
-    #     while (norm > 1E-4):
-    #         v = MM.dot(v)
-    #         norm = np.linalg.norm(v)
-    #     eig = abs(v.dot(MM.dot(v))/v.dot(v))
-    #     if (eig > conveig) : conveig = eig
 
-    print("{"+str(xmin[0])+","+str(ffmin)+"},")#+str(dd)+","+str(conveig))
+n = 16
+print("n= "+str(n))
+d = 2.
+rlx = np.sqrt(2.)/2. #2*d**2 / (2*d**2+d-1)
+print("rlx= "+str(rlx))
+dc = DiscreteOperator(problem_=ReactionDiffusion(basis_=LagrangeBasis(order_=1)),
+                      n_=n,
+                      periodic_=False)
+dc.assemble()
+A = np.matrix(dc.A.subs({dc.bs.h:1./dc.n,dc.pb.d:d}),dtype=np.float64)
+E = np.eye(2*n)-MG(A,1,d,rlx)
+print(sorted(abs(np.real(np.linalg.eigvals(E))),reverse=True)[0])
+
+# rhs = np.ones(((dc.bs.p + 1)*dc.n,1))/float((dc.bs.p + 1)*dc.n)
+# x = np.zeros(((dc.bs.p + 1)*dc.n,1))
+# norm0 = np.linalg.norm(np.ones((dc.bs.p + 1)*dc.n)/float((dc.bs.p + 1)*dc.n))
+# normr = 1.
+# it = 0
+# while (normr/norm0 > 1.E-8):
+#     r = rhs - A.dot(x)
+#     x = x + MG(r,1,d,rlx)
+#     normr = np.linalg.norm(r)
+#     print(it,normr)
+#     it = it + 1
+#     if (it > 50):break
+
     
+# rlx = 1.
+# rlx = 2*d/(2+3*d)
+# rlx = 2*d**2 / (2*d**2+d-1)
+# for i in range(1,10):
+#     d = 1.+0.1*i
+#     print(d,end=" ")
+#     func(d)
+
+
+# dc = DiscreteOperator(problem_=ReactionDiffusion(basis_=LagrangeBasis(order_=1)),
+#                       n_=4,
+#                       periodic_=False)
+# dc.assemble()
+# cc = CoarseCorrection(discreteOperator_=dc,c_=0.5)
+# cc.assemble()
+# A4 = cp.deepcopy(dc.A)
+# sy.pprint(A4[0:16,0:16])
+# dc = DiscreteOperator(problem_=ReactionDiffusion(basis_=LagrangeBasis(order_=1)),
+#                       n_=8,
+#                       periodic_=False)
+# dc.assemble()
+# cc = CoarseCorrection(discreteOperator_=dc,c_=0.5)
+# cc.assemble()
+# A40 = sy.simplify(cc.Rs*dc.A*cc.RTs)
+# sy.pprint(A40[0:16,0:16])
+# sy.pprint(sy.simplify(cc.Rs*cc.RTs*sy.ones(cc.Rs.shape[0],1)))
+    
+
+# d = 3.
+# rlx = 0.98
+# i = 4
+# n = 2**i
+# dc = DiscreteOperator(problem_=ReactionDiffusion(basis_=LagrangeBasis(order_=1)),
+#                       n_=n,
+#                       periodic_=False)
+# dc.assemble()
+# A = np.matrix(dc.A.subs({dc.bs.h:1./dc.n,dc.pb.d:d}),dtype=np.float64)
+# E = np.eye(2*n)-MG(A,1,d,rlx)
+# print(sorted(abs(np.real(np.linalg.eigvals(E))),reverse=True)[0])
+
+# for i in range(1,7):
+#     n = 2**i
+#     dc = DiscreteOperator(problem_=ReactionDiffusion(basis_=LagrangeBasis(order_=1)),
+#                           n_=n,
+#                           periodic_=False)
+#     dc.assemble()
+#     A = np.matrix(dc.A.subs({dc.bs.h:1./dc.n,dc.pb.d:d}),dtype=np.float64)
+#     E = np.eye(2*n)-MG(A,1)
+#     print(sorted(abs(np.real(np.linalg.eigvals(E))),reverse=True)[0])
+        
 # for i in range(0,51):
 #     func(1.001+((6.-1.001)*(2.**(float(i)/50.) - 1.)))
 
-c = 0.56460427612264228825165455619252
-a = 0.90815413446701560826304190680793
-d = 1.51697830014707997232890254807433
+# c = 0.5
+# d = 2
+# a = 2*d**2/(2*d**2+d-1)
+# dc.nassemble({dc.bs.h:1./dc.n,dc.pb.d:d,dc.pb.e:np.infty})
+# dc.assemble_cellBJ()
+# cc = CoarseCorrection(discreteOperator_=dc,c_=c)
+# cc.nassemble()
+# Id = np.eye((dc.bs.p + 1)*dc.n)
+# A0inv = cc.A0inv
+# R = cc.R
+# RT = cc.RT
+# An = dc.An
+# Dinv = dc.Dc
+# el = 0
+# if (dc.periodic): el = 1
+# MM = a*Dinv + RT.dot(A0inv).dot(R).dot(Id - a*An.dot(Dinv))
+# eigvals,eigvecs = np.linalg.eig(Id-MM.dot(An))
+# eigvals = np.real(eigvals)
+# eigsort = np.array(sorted(eigvals,reverse=True))
+# mp.ylim([-0.7,0.7])
+# mp.xlabel("#Eigenvalue")
+# mp.ylabel("Eigenvalue")
+# mp.plot(eigsort,'g.')
 
 # c = 0.5
-# a = 1.
-# d = 2.
+# d = 1.5
+# a = 2*d**2/(2*d**2+d-1)
+# dc.nassemble({dc.bs.h:1./dc.n,dc.pb.d:d,dc.pb.e:np.infty})
+# dc.assemble_cellBJ()
+# cc = CoarseCorrection(discreteOperator_=dc,c_=c)
+# cc.nassemble()
+# Id = np.eye((dc.bs.p + 1)*dc.n)
+# A0inv = cc.A0inv
+# R = cc.R
+# RT = cc.RT
+# An = dc.An
+# Dinv = dc.Dc
+# el = 0
+# if (dc.periodic): el = 1
+# MM = a*Dinv + RT.dot(A0inv).dot(R).dot(Id - a*An.dot(Dinv))
+# eigvals,eigvecs = np.linalg.eig(Id-MM.dot(An))
+# eigvals = np.real(eigvals)
+# eigsort = np.array(sorted(eigvals,reverse=True))
+# mp.ylim([-0.7,0.7])
+# mp.xlabel("#Eigenvalue")
+# mp.ylabel("Eigenvalue")
+# mp.plot(eigsort,'b.')
 
-dc.nassemble({dc.bs.h:1./dc.n,dc.pb.d:d,dc.pb.e:np.infty})
-dc.assemble_cellBJ()
-cc = CoarseCorrection(discreteOperator_=dc,c_=c)
-cc.assemble()
-Id = np.eye((dc.bs.p + 1)*dc.n)
-A0inv = cc.A0inv
-R = cc.R
-RT = cc.RT
-An = dc.An
-Dinv = dc.Dc
-el = 0
-if (dc.periodic): el = 1
+# c = 0.5
+# d = 1.5
+# a = 2*d**2/(2*d**2+d-1)
+# dc.nassemble({dc.bs.h:1./dc.n,dc.pb.d:d,dc.pb.e:np.infty})
+# dc.assemble_cellBJ()
+# cc = CoarseCorrection(discreteOperator_=dc,c_=c)
+# cc.nassemble()
+# Id = np.eye((dc.bs.p + 1)*dc.n)
+# A0inv = cc.A0inv
+# R = cc.R
+# RT = cc.RT
+# An = dc.An
+# Dinv = dc.Dc
+# el = 0
+# if (dc.periodic): el = 1
+# MM = a*Dinv + RT.dot(A0inv).dot(R).dot(Id - a*An.dot(Dinv))
+# eigvals,eigvecs = np.linalg.eig(Id-MM.dot(An))
+# eigvals = np.real(eigvals)
+# eigsort = np.array(sorted(eigvals,reverse=True))
+# mp.ylim([-0.7,0.7])
+# mp.xlabel("#Eigenvalue")
+# mp.ylabel("Eigenvalue")
+# mp.plot(eigsort,'b.')
 
-def mv(g):
-    x = a*Dinv.dot(g)
-    y = x + RT.dot(A0inv).dot(R).dot(g - An.dot(x))
-    return y
+# c = 0.56460427612264228825165455619252
+# a = 0.90815413446701560826304190680793
+# d = 1.51697830014707997232890254807433
+# dc.nassemble({dc.bs.h:1./dc.n,dc.pb.d:d,dc.pb.e:np.infty})
+# dc.assemble_cellBJ()
+# cc = CoarseCorrection(discreteOperator_=dc,c_=c)
+# cc.nassemble()
+# Id = np.eye((dc.bs.p + 1)*dc.n)
+# A0inv = cc.A0inv
+# R = cc.R
+# RT = cc.RT
+# An = dc.An
+# Dinv = dc.Dc
+# el = 0
+# if (dc.periodic): el = 1
+# MM = a*Dinv + RT.dot(A0inv).dot(R).dot(Id - a*An.dot(Dinv))
+# eigvals,eigvecs = np.linalg.eig(Id-MM.dot(An))
+# eigvals = np.real(eigvals)
+# eigsort = np.array(sorted(eigvals,reverse=True))
+# mp.plot(eigsort,'r.')
+# mp.savefig("1Dspec.pdf")
 
-rhs = np.ones((dc.bs.p + 1)*dc.n)/float((dc.bs.p + 1)*dc.n)
+# def mv(g):
+#     x = a*Dinv.dot(g)
+#     y = x + RT.dot(A0inv).dot(R).dot(g - An.dot(x))
+#     return y
 
-def callback(g):
-    print(g)
+# rhs = np.ones((dc.bs.p + 1)*dc.n)/float((dc.bs.p + 1)*dc.n)
+
+# def callback(g):
+#     print(g)
 #    print('test')
 #    print(np.linalg.norm(rhs - An.dot(g)))
 
 # M = sc.sparse.linalg.LinearOperator(((dc.bs.p + 1)*dc.n,(dc.bs.p + 1)*dc.n),matvec=mv)
 
-MM = a*Dinv + RT.dot(A0inv).dot(R).dot(Id - a*An.dot(Dinv))
+# MM = a*Dinv + RT.dot(A0inv).dot(R).dot(Id - a*An.dot(Dinv))
 
-eigvals,eigvecs = np.linalg.eig(MM.dot(An))
-eigvals = np.real(eigvals)
+# eigvals,eigvecs = np.linalg.eig(MM.dot(An))
+# eigvals = np.real(eigvals)
 # eigsort = np.array([eigvals[0]])
 # for num in eigvals:
 #     counted = False
@@ -551,16 +768,16 @@ eigvals = np.real(eigvals)
 #     normr = np.linalg.norm(r)
 #     print(normr)
 
-x,e = sc.sparse.linalg.gmres(An,
-                             eigvecs[:,100],
-                             x0=None,
-                             tol=1e-10,
-                             restart=1000,
-                             maxiter=None,
-                             M=MM,
-                             callback=callback,
-                             restrt=None,
-                             atol=1e-20)
+# x,e = sc.sparse.linalg.gmres(An,
+#                              eigvecs[:,100],
+#                              x0=None,
+#                              tol=1e-10,
+#                              restart=1000,
+#                              maxiter=None,
+#                              M=MM,
+#                              callback=callback,
+#                              restrt=None,
+#                              atol=1e-20)
 
 # x,e = sc.sparse.linalg.cgs(dc.An,
 #                            rhs,
