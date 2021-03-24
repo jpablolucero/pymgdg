@@ -11,7 +11,7 @@ import numpy as np
 import sympy as sy
 import scipy as sc
 import sys
-from scipy.optimize import fmin
+from scipy.optimize import minimize,fmin
 import matplotlib
 matplotlib.use('pdf')
 import matplotlib.pyplot as mp
@@ -434,7 +434,7 @@ class CoarseCorrection:
                     self.RT[i,j] = 1.
                     avg = True
         self.R = np.transpose(self.RT)
-        self.RT = self.RT/2
+        self.RT = self.RT
         self.A0 = self.R.dot(self.An.dot(self.RT))
         self.A0inv = np.linalg.pinv(self.A0)
 
@@ -492,12 +492,13 @@ def MG(g,s,d,rlx):
     Dinv = dc.Dc
     cc = CoarseCorrection(discreteOperator_=dc,c_=0.5)
     cc.assemble()
+    #cc.nassemble()
     A = np.matrix(dc.A.subs({dc.bs.h:1./dc.n,dc.pb.d:d}),dtype=np.float64)
     RT = np.matrix(cc.RTs.subs({dc.bs.h:1./dc.n,dc.pb.d:d}),dtype=np.float64)
+    R = np.transpose(RT)
     RR = np.matrix(cc.Rs.subs({dc.bs.h:1./dc.n,dc.pb.d:d}),dtype=np.float64)
     # RT = cc.RT
-    # RR = cc.R
-    R = np.transpose(RT)
+    # R = cc.R
     x = 0*g
 
     for i in range(s):
@@ -510,8 +511,9 @@ def MG(g,s,d,rlx):
                                n_=int(n/2),
                                periodic_=False)
         dc0.assemble()
-        A0 = np.matrix((cc.Rs*dc.A*cc.RTs).subs({dc0.bs.h:1./dc0.n,dc0.pb.d:d}),dtype=np.float64)
-        #sy.pprint(sy.simplify(cc.Rs*dc.A*cc.RTs-dc0.A))
+        A0 = np.matrix((dc0.A).subs({dc0.bs.h:1./dc0.n,dc0.pb.d:d}),dtype=np.float64)
+        # np.matrix(R.dot(A).dot(RT)/2.) # Two-level coarse space
+        # sy.pprint(sy.simplify(cc.Rs*dc.A*cc.RTs-dc0.A)) # Test of R for inherited Galerkin A0
         A0inv = np.linalg.inv(A0)
         x = x + RT.dot(A0inv.dot(R.dot(g - A.dot(x))))
         
@@ -533,44 +535,55 @@ def func(d):
     """
     i = 4
     n = 2**i
+    # dc = DiscreteOperator(problem_=ReactionDiffusion(basis_=LagrangeBasis(order_=1)),
+    #                       n_=n,
+    #                       periodic_=False)
+    # dc.assemble()
+    # A = np.matrix(dc.A.subs({dc.bs.h:1./dc.n,dc.pb.d:d}),dtype=np.float64)
+    # def func2(rlx):
+    #     E = np.eye(2*n)-MG(A,1,d,rlx[0])
+    #     return sorted(abs(np.real(np.linalg.eigvals(E))),reverse=True)[0]
+    # xmin,ffmin,dum1,dum2,dum3 = fmin(func2,np.array([1.]),ftol=0.000001,xtol=0.000001,full_output=True,disp=False)
+    # print(xmin[0],end=" ")
+    # print(ffmin)
+
     dc = DiscreteOperator(problem_=ReactionDiffusion(basis_=LagrangeBasis(order_=1)),
                           n_=n,
                           periodic_=False)
     dc.assemble()
-    A = np.matrix(dc.A.subs({dc.bs.h:1./dc.n,dc.pb.d:d}),dtype=np.float64)
-    def func2(rlx):
-        E = np.eye(2*n)-MG(A,1,d,rlx[0])
+    def func2(x):
+        A = np.matrix(dc.A.subs({dc.bs.h:1./dc.n,dc.pb.d:d}),dtype=np.float64)
+        E = np.eye(2*n)-MG(A,1,x[0],x[1])
         return sorted(abs(np.real(np.linalg.eigvals(E))),reverse=True)[0]
-    xmin,ffmin,dum1,dum2,dum3 = fmin(func2,np.array([1.]),ftol=0.000001,xtol=0.000001,full_output=True,disp=False)
-    print(xmin[0],end=" ")
-    print(ffmin)
+    print(minimize(func2,np.array([2.,0.7]),tol=0.01,method='Nelder-Mead'))
 
-
+#func(2.)
+    
 n = 16
-print("n= "+str(n))
 d = 2.
 rlx = np.sqrt(2.)/2. #2*d**2 / (2*d**2+d-1)
-print("rlx= "+str(rlx))
+
 dc = DiscreteOperator(problem_=ReactionDiffusion(basis_=LagrangeBasis(order_=1)),
                       n_=n,
                       periodic_=False)
 dc.assemble()
 A = np.matrix(dc.A.subs({dc.bs.h:1./dc.n,dc.pb.d:d}),dtype=np.float64)
-E = np.eye(2*n)-MG(A,1,d,rlx)
-print(sorted(abs(np.real(np.linalg.eigvals(E))),reverse=True)[0])
 
-# rhs = np.ones(((dc.bs.p + 1)*dc.n,1))/float((dc.bs.p + 1)*dc.n)
-# x = np.zeros(((dc.bs.p + 1)*dc.n,1))
-# norm0 = np.linalg.norm(np.ones((dc.bs.p + 1)*dc.n)/float((dc.bs.p + 1)*dc.n))
-# normr = 1.
-# it = 0
-# while (normr/norm0 > 1.E-8):
-#     r = rhs - A.dot(x)
-#     x = x + MG(r,1,d,rlx)
-#     normr = np.linalg.norm(r)
-#     print(it,normr)
-#     it = it + 1
-#     if (it > 50):break
+# E = np.eye(2*n)-MG(A,1,d,rlx)
+# print(sorted(abs(np.real(np.linalg.eigvals(E))),reverse=True)[0])
+
+rhs = np.ones(((dc.bs.p + 1)*dc.n,1))/float((dc.bs.p + 1)*dc.n)
+x = np.zeros(((dc.bs.p + 1)*dc.n,1))
+norm0 = np.linalg.norm(np.ones((dc.bs.p + 1)*dc.n)/float((dc.bs.p + 1)*dc.n))
+normr = 1.
+it = 0
+while (normr/norm0 > 1.E-8):
+    r = rhs - A.dot(x)
+    x = x + MG(r,1,d,rlx)
+    normr = np.linalg.norm(r)
+    print(it,normr)
+    it = it + 1
+    if (it > 100):break
 
     
 # rlx = 1.
