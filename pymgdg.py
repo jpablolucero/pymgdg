@@ -512,7 +512,7 @@ def MG(g,s,d,rlx):
                                periodic_=False)
         dc0.assemble()
         A0 = np.matrix((dc0.A).subs({dc0.bs.h:1./dc0.n,dc0.pb.d:d}),dtype=np.float64)
-        # np.matrix(R.dot(A).dot(RT)/2.) # Two-level coarse space
+        # A0 = np.matrix(R.dot(A).dot(RT)) # Two-level coarse space
         # sy.pprint(sy.simplify(cc.Rs*dc.A*cc.RTs-dc0.A)) # Test of R for inherited Galerkin A0
         A0inv = np.linalg.inv(A0)
         x = x + RT.dot(A0inv.dot(R.dot(g - A.dot(x))))
@@ -533,31 +533,31 @@ def func(d):
     dd: 
     DG method penalty parameter.
     """
-    i = 4
+    i = 3
     n = 2**i
-    # dc = DiscreteOperator(problem_=ReactionDiffusion(basis_=LagrangeBasis(order_=1)),
-    #                       n_=n,
-    #                       periodic_=False)
-    # dc.assemble()
-    # A = np.matrix(dc.A.subs({dc.bs.h:1./dc.n,dc.pb.d:d}),dtype=np.float64)
-    # def func2(rlx):
-    #     E = np.eye(2*n)-MG(A,1,d,rlx[0])
-    #     return sorted(abs(np.real(np.linalg.eigvals(E))),reverse=True)[0]
-    # xmin,ffmin,dum1,dum2,dum3 = fmin(func2,np.array([1.]),ftol=0.000001,xtol=0.000001,full_output=True,disp=False)
-    # print(xmin[0],end=" ")
-    # print(ffmin)
-
     dc = DiscreteOperator(problem_=ReactionDiffusion(basis_=LagrangeBasis(order_=1)),
                           n_=n,
                           periodic_=False)
     dc.assemble()
-    def func2(x):
-        A = np.matrix(dc.A.subs({dc.bs.h:1./dc.n,dc.pb.d:d}),dtype=np.float64)
-        E = np.eye(2*n)-MG(A,1,x[0],x[1])
+    A = np.matrix(dc.A.subs({dc.bs.h:1./dc.n,dc.pb.d:d}),dtype=np.float64)
+    def func2(rlx):
+        E = np.eye(2*n)-MG(A,1,d,rlx[0])
         return sorted(abs(np.real(np.linalg.eigvals(E))),reverse=True)[0]
-    print(minimize(func2,np.array([2.,0.7]),tol=0.01,method='Nelder-Mead'))
+    xmin,ffmin,dum1,dum2,dum3 = fmin(func2,np.array([1.]),ftol=0.000001,xtol=0.000001,full_output=True,disp=False)
+    print(xmin[0],end=" ")
+    print(ffmin)
 
-#func(2.)
+    # dc = DiscreteOperator(problem_=ReactionDiffusion(basis_=LagrangeBasis(order_=1)),
+    #                       n_=n,
+    #                       periodic_=False)
+    # dc.assemble()
+    # def func2(x):
+    #     A = np.matrix(dc.A.subs({dc.bs.h:1./dc.n,dc.pb.d:d}),dtype=np.float64)
+    #     E = np.eye(2*n)-MG(A,1,x[0],x[1])
+    #     return sorted(abs(np.real(np.linalg.eigvals(E))),reverse=True)[0]
+    # print(minimize(func2,np.array([1.5,0.9]),tol=0.0001,method='Nelder-Mead'))
+
+# func(1.5)
     
 n = 16
 d = 2.
